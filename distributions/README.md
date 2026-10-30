@@ -3,6 +3,7 @@
 This README covers topics that apply to all distributions. For distribution-specific information please refer to:
 - [nrdot-collector](./nrdot-collector/README.md)
 - [nrdot-collector-experimental](./nrdot-collector-experimental/README.md)
+- [e-nrdot-collector](./e-nrdot-collector/README.md)
 
 We also provide [FIPS-compliant docker images](../fips/README.md).
 

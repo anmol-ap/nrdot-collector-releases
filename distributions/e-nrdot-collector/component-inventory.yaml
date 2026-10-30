@@ -1,0 +1,77 @@
+# Component Inventory
+#
+# Maps each component in the `e-nrdot-collector` distribution to the use cases
+# that require it. The component set started as a copy of `nrdot-collector`;
+# the eBPF tags record which components our own configs use, which is the basis
+# for curating (adding/removing) components.
+#
+# This file is validated against manifest.yaml by
+# scripts/misc/validate-component-inventory.sh (run as part of `make ci`). Component
+# names must match the path suffix after /<category>/ in the manifest's gomod
+# value (e.g. `extension/observer/dockerobserver` -> `observer/dockerobserver`).
+#
+# Use-case legend:
+#   eBPF-host  - e-nrdot-collector default config.yaml (host + process metrics, VM/standalone)
+#   eBPF-k8s   - nr-ebpf-agent Helm chart nrdot configs (per-node, cluster, control plane)
+#   Core, Host, k8s, ATP, Gateway, OHI, OHI-<name>, DB, DB-<name>
+#              - inherited from nrdot-collector's component-inventory.yaml (same meaning)
+
+receivers:
+  awsecscontainermetricsreceiver: [OHI-ecs]
+  dockerstatsreceiver: [OHI-docker]
+  elasticsearchreceiver: [OHI-elasticsearch]
+  haproxyreceiver: [OHI-haproxy]
+  hostmetricsreceiver: [eBPF-host, eBPF-k8s, Host, k8s, OHI]
+  k8seventsreceiver: [eBPF-k8s, OHI, k8s]
+  kafkametricsreceiver: [OHI-kafka]
+  kafkareceiver: [OHI-kafka]
+  kubeletstatsreceiver: [eBPF-k8s, OHI, k8s]
+  nginxreceiver: [OHI-nginx]
+  nrmysqlreceiver: [DB-mysql]
+  nroracledbreceiver: [DB-oracle]
+  nrpostgresqlreceiver: [DB-postgresql]
+  nrsqlserverreceiver: [DB-sqlserver]
+  otlpreceiver: [eBPF-host, Core]
+  prometheusreceiver: [eBPF-k8s, Gateway, k8s]
+  rabbitmqreceiver: [OHI-rabbitmq]
+  receivercreator: [OHI]
+  redisreceiver: [OHI-redis]
+  sqlqueryreceiver: [DB]
+
+processors:
+  adaptivetelemetryprocessor: [ATP]
+  attributesprocessor: [eBPF-host, eBPF-k8s, Core]
+  batchprocessor: [eBPF-host, eBPF-k8s, Core]
+  cumulativetodeltaprocessor: [eBPF-host, eBPF-k8s, Core]
+  filterprocessor: [eBPF-host, eBPF-k8s, Core]
+  groupbyattrsprocessor: [eBPF-k8s, k8s, Gateway]
+  k8sattributesprocessor: [eBPF-k8s, k8s, ATP, OHI]
+  memorylimiterprocessor: [eBPF-host, eBPF-k8s, Core]
+  metricsgenerationprocessor: [eBPF-k8s, k8s, ATP, OHI]
+  metricstransformprocessor: [eBPF-host, eBPF-k8s, Core]
+  resourcedetectionprocessor: [eBPF-host, eBPF-k8s, Core]
+  resourceprocessor: [eBPF-k8s, k8s, Gateway]
+  transformprocessor: [eBPF-host, eBPF-k8s, Core]
+
+exporters:
+  debugexporter: [Core]
+  otlpexporter: [Core]
+  otlphttpexporter: [eBPF-host, eBPF-k8s, Core]
+
+connectors:
+  routingconnector: [eBPF-k8s, Core]
+
+extensions:
+  healthcheckextension: [eBPF-host, eBPF-k8s, Core]
+  observer/dockerobserver: [OHI]
+  observer/hostobserver: [OHI]
+  observer/k8sobserver: [OHI]
+
+providers:
+  aesprovider: [DB-oracle, DB-sqlserver]
+  envprovider: [eBPF-host, eBPF-k8s, Core]
+  fileprovider: [eBPF-host, eBPF-k8s, Core]
+  httpprovider: [Core]
+  httpsprovider: [Core]
+  secretsmanagerprovider: [DB-oracle, DB-sqlserver]
+  yamlprovider: [Core]

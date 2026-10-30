@@ -30,6 +30,7 @@ import (
 const (
 	CoreDistro         = "nrdot-collector"
 	ExperimentalDistro = "nrdot-collector-experimental"
+	EnrdotDistro       = "e-nrdot-collector"
 
 	ConfigFile = "config.yaml"
 )
@@ -129,6 +130,13 @@ func NewDistribution(baseDist string, fips bool) Distribution {
 		dist.IgnoredBuilds = nil
 		dist.SkipPackages = true
 		dist.SkipUploadToBlobStorage = true
+	}
+
+	// e-nrdot-collector targets Linux hosts and K8s nodes only (no Windows binaries or MSI).
+	if baseDist == EnrdotDistro {
+		dist.Goos = []string{"linux"}
+		dist.IgnoredBuilds = nil
+		dist.SkipMSI = true
 	}
 
 	return dist

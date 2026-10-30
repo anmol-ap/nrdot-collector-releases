@@ -1,0 +1,17 @@
+# Components of the core `nrdot-collector` distribution that are deliberately NOT part of
+# `e-nrdot-collector`, with the reason. Component names follow component-inventory.yaml
+# (path suffix after /<category>/ in the gomod value).
+#
+# scripts/misc/check-core-component-drift.sh (`make core-drift-check`) flags every core
+# component that is neither in this distribution's manifest.yaml nor listed here, so a
+# component newly added to core gets an explicit include/exclude decision.
+
+receivers:
+  filelogreceiver: Host and pod log collection done by eBPF.
+
+processors:
+  spanprocessor: Gateway mode only.
+  tailsamplingprocessor: Gateway mode only.
+
+exporters:
+  loadbalancingexporter: Gateway mode only.

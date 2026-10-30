@@ -10,6 +10,7 @@ Generated assets are available in the corresponding Github [release page](https:
 
 - [nrdot-collector](./distributions/nrdot-collector/README.md): Comprehensive distribution supporting all [use cases](./distributions/nrdot-collector/README.md#use-cases) offered by New Relic. 
 - [nrdot-collector-experimental](./distributions/nrdot-collector-experimental/README.md): Experimental integrations
+- [e-nrdot-collector](./distributions/e-nrdot-collector/README.md): Infrastructure monitoring with the New Relic eBPF agent
 
 Please refer to [this README](./distributions/README.md) for documentation on our distributions.
 

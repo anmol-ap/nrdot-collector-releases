@@ -1,0 +1,300 @@
+# e-nrdot-collector default config for eBPF infra monitoring:
+# - host + process metrics (host_metrics), derived from the nrdot-collector host config
+#   without file_log (host logs are out of scope);
+# - OTLP from the eBPF agent and OBI on the same host, forwarded to New Relic.
+# Every credential/endpoint is an ${env:...} ref, set in e-nrdot-collector.conf
+# (packages) or the container environment (image).
+extensions:
+  health_check:
+
+receivers:
+  # Receives OTLP from the eBPF agent and OBI. The endpoints default to localhost:4317 (gRPC) and
+  # localhost:4318 (HTTP); to accept data from outside a container, override them, e.g.
+  # --config 'yaml:receivers::otlp::protocols::grpc::endpoint: 0.0.0.0:4317'.
+  otlp:
+    protocols:
+      grpc:
+      http:
+
+  host_metrics:
+    collection_interval: 60s
+    scrapers:
+      cpu:
+        metrics:
+          system.cpu.logical.count:
+            enabled: false
+          system.cpu.time:
+            enabled: false
+          system.cpu.utilization:
+            enabled: true
+      load:
+      # used = MemTotal - MemAvailable (feature gate receiver.hostmetricsreceiver.UseLinuxMemAvailable,
+      # on by default), as OTel semconv defines it: "On Linux, this corresponds to "MemTotal -
+      # MemAvailable" from /proc/meminfo, which more accurately reflects memory in active use by
+      # applications compared to older formulas based on free, cached, and buffers."
+      # (https://opentelemetry.io/docs/specs/semconv/system/system-metrics/#metric-systemmemoryusage).
+      # The infrastructure agent's default (ignore_reclaimable: false) is the same.
+      memory:
+        metrics:
+          system.memory.utilization:
+            enabled: true
+      paging:
+        metrics:
+          system.paging.utilization:
+            enabled: false
+          system.paging.faults:
+            enabled: false
+      # The infrastructure agent's supported filesystems (storage_sampler_linux.go
+      # SupportedFileSystems); vfat (/boot/efi), tmpfs, overlay and squashfs are
+      # not reported.
+      filesystem:
+        include_fs_types:
+          fs_types: [xfs, btrfs, ext, ext2, ext3, ext4, hfs, vxfs, zfs, reiserfs]
+          match_type: strict
+        metrics:
+          system.filesystem.utilization:
+            enabled: true
+      # Whole disks only. /proc/diskstats also lists partitions and dm/md devices,
+      # whose I/O is already counted on the disk underneath, so summing across
+      # devices would double-count.
+      disk:
+        include:
+          devices: ["^(sd[a-z]+|xvd[a-z]+|vd[a-z]+|hd[a-z]+|nvme[0-9]+n[0-9]+)$"]
+          match_type: regexp
+        metrics:
+          system.disk.merged:
+            enabled: false
+          system.disk.pending_operations:
+            enabled: false
+          system.disk.weighted_io_time:
+            enabled: false
+      # The infrastructure agent's default network_interface_filters
+      # (config_linux.go): case-insensitive prefix dummy, lo, vmnet, sit, tun, tap,
+      # veth, or tun/tap at index 1.
+      network:
+        exclude:
+          interfaces: ["(?i)^(dummy|lo|vmnet|sit|tun|tap|veth|.tun|.tap)"]
+          match_type: regexp
+        metrics:
+          system.network.connections:
+            enabled: false
+      processes:
+      # Per-process metrics that need no privilege (/proc/<pid>/stat, statm,
+      # status). Disk I/O and FD counts need CAP_SYS_PTRACE / CAP_DAC_READ_SEARCH
+      # for other users' processes, so the eBPF agent reports those instead.
+      # process.cpu.utilization follows OTel semconv: "Difference in process.cpu.time since the
+      # last measurement, divided by the elapsed time and number of CPUs available to the process."
+      # (https://opentelemetry.io/docs/specs/semconv/system/process-metrics/#metric-processcpuutilization).
+      # So a process busy on 2 cores of a 16-CPU host reads 0.125, and per-process values add up to
+      # host CPU utilization. The infrastructure agent's ProcessSample.cpuPercent is not divided by
+      # the CPU count (the same process reads 200%).
+      # Processes are sampled once per collection interval. A process needs two samples to get a
+      # cpu.utilization value, so one that lives shorter than the interval is not attributed (its
+      # CPU still shows in system.cpu.utilization). The infrastructure agent has the same limit at
+      # its 20s metrics_process_sample_rate.
+      process:
+        metrics:
+          process.cpu.utilization:
+            enabled: true
+          process.cpu.time:
+            enabled: false
+          process.threads:
+            enabled: true
+          # Attribute renamed to system.paging.fault.type by transform/host_paging_fault_type.
+          process.paging.faults:
+            enabled: true
+          process.disk.io:
+            enabled: false
+        # Scraper default; no New Relic UI reads it, and it needs CAP_SYS_PTRACE.
+        resource_attributes:
+          process.executable.path:
+            enabled: false
+          # Full argv can carry secrets. OTel semconv marks process.command_line Opt-In: "SHOULD NOT
+          # be collected by default unless there is sanitization that excludes sensitive data."
+          # (https://opentelemetry.io/docs/specs/semconv/resource/process/). The infrastructure agent
+          # also strips arguments by default (strip_command_line: true). process.command (argv[0])
+          # is kept; no New Relic UI reads process.command_line.
+          process.command_line:
+            enabled: false
+        # Kernel threads and processes exiting mid-scrape would log errors every scrape.
+        mute_process_all_errors: true
+
+processors:
+  metrics_transform:
+    transforms:
+      # One host-wide value per state, grouped as the infrastructure agent does
+      # (cpu.go): user = user + nice, system = system + interrupt + softirq.
+      - include: system.cpu.utilization
+        action: update
+        operations:
+          - action: aggregate_labels
+            label_set: [ state ]
+            aggregation_type: mean
+          - action: aggregate_label_values
+            label: state
+            aggregated_values: [ user, nice ]
+            new_value: user
+            aggregation_type: sum
+          - action: aggregate_label_values
+            label: state
+            aggregated_values: [ system, interrupt, softirq ]
+            new_value: system
+            aggregation_type: sum
+      - include: system.paging.operations
+        action: update
+        operations:
+          - action: aggregate_labels
+            label_set: [ direction ]
+            aggregation_type: sum
+  # utilization keeps only state=used: no UI reads the other states (the Host
+  # Metrics page reads free/used from system.memory.usage).
+  # Kernel threads (pid 2 = kthreadd and its children). The infrastructure agent skips
+  # processes with no resident memory, which "filters out certain kernel processes"
+  # (process/harvester_linux.go); on the test host that set is exactly pid 2 and its children.
+  # OTel semconv and the process scraper have no kernel-thread rule.
+  filter/exclude_kernel_threads:
+    metrics:
+      datapoint:
+        - 'resource.attributes["process.pid"] == 2 or resource.attributes["process.parent_pid"] == 2'
+  filter/exclude_memory_utilization:
+    metrics:
+      datapoint:
+        - 'metric.name == "system.memory.utilization" and attributes["state"] != "used"'
+  filter/exclude_memory_usage:
+    metrics:
+      datapoint:
+        - 'metric.name == "system.memory.usage" and attributes["state"] == "slab_unreclaimable"'
+        - 'metric.name == "system.memory.usage" and attributes["state"] == "inactive"'
+  filter/exclude_filesystem_usage:
+    metrics:
+      datapoint:
+        - 'metric.name == "system.filesystem.usage" and attributes["state"] == "reserved"'
+        - 'metric.name == "system.filesystem.inodes.usage" and attributes["state"] == "reserved"'
+  filter/exclude_system_paging:
+    metrics:
+      datapoint:
+        - 'metric.name == "system.paging.usage" and attributes["state"] == "cached"'
+        - 'metric.name == "system.paging.operations" and attributes["type"] == "cached"'
+  attributes/exclude_system_paging:
+    include:
+      match_type: strict
+      metric_names:
+        - system.paging.operations
+    actions:
+      - key: type
+        action: delete
+  # process.paging.faults: rename the fault-type attribute `type` to the semconv name
+  # system.paging.fault.type (major/minor), the name the eBPF agent sent. The scraper's own
+  # semconv form (process.paging.faults@v1) needs the alpha feature gate
+  # scraper.process.EmitV1SystemConventions, which also switches process.cpu.utilization to
+  # cpu.mode (the New Relic UI reads state) and adds process.thread.count.
+  transform/host_paging_fault_type:
+    error_mode: ignore
+    metric_statements:
+      - context: datapoint
+        statements:
+          - set(datapoint.attributes["system.paging.fault.type"], datapoint.attributes["type"]) where metric.name == "process.paging.faults"
+          - delete_key(datapoint.attributes, "type") where metric.name == "process.paging.faults"
+  cumulative_to_delta:
+  # A process with no page faults in the interval sends nothing, as the eBPF agent
+  # did. Must run after cumulative_to_delta.
+  filter/drop_zero_page_faults:
+    metrics:
+      datapoint:
+        - 'metric.name == "process.paging.faults" and value_int == 0'
+  transform/host:
+    metric_statements:
+      - context: metric
+        statements:
+          - set(metric.description, "")
+          - set(metric.unit, "")
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: ${env:NEW_RELIC_MEMORY_LIMIT_MIB:-100}
+  batch:
+  resource_detection:
+    detectors: ["system"]
+    system:
+      hostname_sources: ["os"]
+      resource_attributes:
+        host.id:
+          enabled: true
+  # Cloud instance id wins for host.id. host.name stays the OS hostname (the
+  # infrastructure agent's hostname and the eBPF agent's host.name) instead of
+  # e.g. the EC2 private DNS name.
+  resource_detection/cloud:
+    detectors: ["gcp", "ec2", "azure"]
+    timeout: 2s
+    override: true
+    ec2:
+      resource_attributes:
+        host.name:
+          enabled: false
+    gcp:
+      resource_attributes:
+        host.name:
+          enabled: false
+    azure:
+      resource_attributes:
+        host.name:
+          enabled: false
+  resource_detection/env:
+    detectors: ["env"]
+    timeout: 2s
+    override: true
+
+  # OTLP data arrives with resource attributes set by its sender (e.g. host.id from the eBPF agent),
+  # so the OTLP pipelines don't run resource_detection: it overrides existing attributes by default.
+  transform/otlp:
+    trace_statements:
+      - context: span
+        statements:
+          - truncate_all(span.attributes, 4095)
+          - truncate_all(resource.attributes, 4095)
+    log_statements:
+      - context: log
+        statements:
+          - truncate_all(log.attributes, 4095)
+          - truncate_all(resource.attributes, 4095)
+
+exporters:
+  otlphttp:
+    endpoint: ${env:OTEL_EXPORTER_OTLP_ENDPOINT:-https://otlp.nr-data.net}
+    headers:
+      api-key: ${env:NEW_RELIC_LICENSE_KEY}
+
+service:
+  extensions: [health_check]
+  pipelines:
+    metrics/host:
+      receivers: [host_metrics]
+      processors:
+        - memory_limiter
+        - filter/exclude_kernel_threads
+        - metrics_transform
+        - filter/exclude_memory_utilization
+        - filter/exclude_memory_usage
+        - filter/exclude_filesystem_usage
+        - filter/exclude_system_paging
+        - attributes/exclude_system_paging
+        - transform/host_paging_fault_type
+        - transform/host
+        - resource_detection
+        - resource_detection/cloud
+        - resource_detection/env
+        - cumulative_to_delta
+        - filter/drop_zero_page_faults
+        - batch
+      exporters: [otlphttp]
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/otlp, batch]
+      exporters: [otlphttp]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/otlp, batch]
+      exporters: [otlphttp]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/otlp, batch]
+      exporters: [otlphttp]

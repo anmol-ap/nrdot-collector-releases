@@ -17,12 +17,12 @@ GO_LICENCE_DETECTOR        := $(TOOLS_BIN_DIR)/go-licence-detector
 GO_LICENCE_DETECTOR_CONFIG   := $(SRC_ROOT)/internal/assets/license/rules.json
 NRLICENSE := $(TOOLS_BIN_DIR)/nrlicense
 
-DISTRIBUTIONS ?= "nrdot-collector,nrdot-collector-experimental"
+DISTRIBUTIONS ?= "nrdot-collector,nrdot-collector-experimental,e-nrdot-collector"
 FIPS ?= false
 
 ci: pre-check build post-check
 
-pre-check: goreleaser-file-check manifests-check component-inventory-check actions-hashes-check
+pre-check: goreleaser-file-check manifests-check component-inventory-check core-drift-check actions-hashes-check
 
 build: go ocb
 	@./scripts/build/build.sh -d "${DISTRIBUTIONS}" -b ${OTELCOL_BUILDER} -f ${FIPS}
@@ -217,6 +217,14 @@ chlog-preview: ${CHLOGGEN}
 .PHONY: chlog-update
 chlog-update: ${CHLOGGEN}
 	./scripts/misc/chloggen-wrapper.sh -b $(CHLOGGEN) -u
+
+# Flag core components that a curated distro (one with excluded-core-components.yaml) neither
+# includes nor excludes. Warns only; run the script with -s to fail on drift.
+.PHONY: core-drift-check
+core-drift-check:
+	@for distro in $$(echo ${DISTRIBUTIONS} | tr ',' ' ' | tr -d '"'); do \
+		./scripts/misc/check-core-component-drift.sh "$$distro" || exit 1; \
+	done
 
 # Check that each distro's component-inventory.yaml (if present) matches its manifest.yaml
 .PHONY: component-inventory-check

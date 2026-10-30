@@ -1,0 +1,17 @@
+[Unit]
+Description=e-NRDOT Collector
+After=network.target
+
+[Service]
+EnvironmentFile=/etc/e-nrdot-collector/e-nrdot-collector.conf
+ExecStart=/usr/bin/e-nrdot-collector $OTELCOL_OPTIONS
+KillMode=mixed
+Restart=on-failure
+Type=simple
+User=e-nrdot-collector
+Group=e-nrdot-collector
+StateDirectory=e-nrdot-collector
+StateDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target
